@@ -78,9 +78,12 @@ class VectorDatabase:
         if len(ids) != len(vectors) or len(set(ids)) != len(ids):
             raise ValueError("ids must be unique and match the number of vectors.")
 
+        # If any of the IDs already exist, remove their old embeddings first.
         self.delete([i for i in ids if i in set(self.ids)])
 
+        # Append the new vectors and their IDs to the database.
         self.vectors = np.concatenate([self.vectors, vectors])
+        # Extend the list of IDs with the new ones.
         self.ids.extend(ids)
 
     def delete(self, ids: Sequence) -> None:
