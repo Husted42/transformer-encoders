@@ -1,6 +1,7 @@
 from src.data_utils.document import Document
 from src.retrievers.base_retriever import Retriever
 import numpy as np
+import re
 from scipy.sparse import lil_matrix
 
 
@@ -18,19 +19,29 @@ class TFIDF(Retriever):
         """
         Remove unwanted charatcters from text and lowercase
         """
-        raise NotImplementedError()
+
+        for i in text:
+            if not i.isalnum() and i!=' ':
+                text=re.sub(str([i]),'',text)
+        text=text.lower().split()
+        return text
         
     def GetQueryVocabulary(self, query: str) -> list[str]:
         """
         Returns all unique words in a query
         """
-        raise NotImplementedError()
+        text=self.PreprocessText(query)
+        query_unique_words=list(set(text))
+        return query_unique_words
 
     def GetDocumentVocabulary(self, document: Document) -> list[str]:
         """
         Returns all unique words in a document
         """
-        raise NotImplementedError()
+        
+        doc_text=self.PreprocessText(document.GetText())
+        doc_unique_words=list(set(doc_text))
+        return doc_unique_words
     
     def GetCorpusVocabulary(self) -> set[str]:
         """
@@ -45,21 +56,41 @@ class TFIDF(Retriever):
         """
         Returns a dict with terms and counts of how many documents the term occurs in (counted once per document).
         """
-        raise NotImplementedError()
-       
+        doc_frequency={}
+        processed_texts = map(lambda doc: set(self.PreprocessText(doc.GetText())), self.index.GetDocuments())
+        all_docs_text=list(*processed_texts)
+        for term in self.corpus_vocabulary:
+            count=0
+            for doc in all_docs_text:
+                if term in doc:
+                    count+=1
+            doc_frequency[term]=count
+        return doc_frequency
     
     def GetInverseDocumentFrequencies(self) -> dict[str, float]:
         """
         Returns a dict with terms and their corresponding inverse document frequencies.
         """
-        raise NotImplementedError()
+        n_docs = len(self.index.GetDocuments())
+        doc_freq=self.GetDocumentFrequencies()
+        inverse_doc_freq={}
+        for i in doc_freq:
+            inverse_doc_freq[i]=np.log(n_docs/doc_freq[i])
+        return inverse_doc_freq
     
     
     def GetDocumentTermCounts(self, document: Document):
         """
         Returns a dict on the form {term: num_occurences} for an input Document.
         """
-        raise NotImplementedError()
+        doc_text=self.PreprocessText(document.GetText())
+        doc_term_count={}
+
+        for term in doc_text:
+            doc_term_count[term]=doc_term_count.get(term,0)+1
+        return doc_term_count
+
+
 
     def GetDocumentsTFIDFVectors(self):
         """
@@ -73,7 +104,15 @@ class TFIDF(Retriever):
         n_terms = len(self.corpus_vocabulary)
         tfidf_matrix = lil_matrix((n_documents, n_terms), dtype=np.float32)
 
-        # TODO: Add tf-idf code
+        
+        docs=self.index.GetDocuments()
+        for term in self.corpus_vocabulary:
+            term_idx=self.term_to_index[term]
+            term_idf=self.idf[term]
+            for doc_idx,doc in enumerate(docs):
+                doc_term_count=self.GetDocumentTermCounts(doc)
+                tf=doc_term_count[term]/sum(doc_term_count.values())
+                tfidf_matrix[doc_idx,term_idx]=tf*term_idf
         
         return tfidf_matrix.tocsr()   # Convert to CSR format for efficient row slicing
     
@@ -88,7 +127,19 @@ class TFIDF(Retriever):
         """
         query_vector = lil_matrix((len(queries), len(self.corpus_vocabulary)), dtype=np.float32)
 
-        # TODO: add code
+        
+
+        for query_idx, query in enumerate(queries):
+            clean_text=self.PreprocessText(query)
+
+            term_count={}
+            for term in clean_text:
+                term_count[term]=term_count.get(term,0)+1
+            
+            for term,count in term_count.items():
+                if term in self.term_to_index():
+                    term_idx=self.term_to_index[term]
+                    query_vector[query_idx,term_idx]=count
 
         return query_vector.tocsr()
 
