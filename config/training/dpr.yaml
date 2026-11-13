@@ -1,0 +1,8 @@
+epochs: 4
+batch_size: 16
+learning_rate: 0.001
+seed: 0
+output_dir: outputs/dpr/checkpoints
+checkpoint_every_epochs: 5
+validation_every_epochs: 5
+validation_max_queries: 128

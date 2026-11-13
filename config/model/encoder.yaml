@@ -1,11 +1,12 @@
 pooling_type: 'cls' # mean | cls | max
-vocab_size: ???
+tokenizer_name: bert-base-uncased
+vocab_size: null
 d_model: 128
 n_heads: 4
 n_layers: 6
 feed_forward_dim: 768
-max_len: ???
-padding_idx: 0
+max_len: 128
+padding_idx: null
 dropout: 0.1
 query_encoder_weights_path: null
 document_encoder_weights_path: null

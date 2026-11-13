@@ -3,4 +3,5 @@ transformers
 torch
 datasets
 scipy
+matplotlib
 .
