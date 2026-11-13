@@ -19,6 +19,12 @@ python main.py top_k=20   # Override a config value
 
 This prints recall@k for the train, validation and test splits. Settings are managed with Hydra in `config/`.
 
+The DPR class can initialize separate query and document encoders from the
+`model/encoder` configuration. Set `vocab_size` and `max_len` to match the
+tokenizer, and optionally provide `query_encoder_weights_path` and
+`document_encoder_weights_path` for saved PyTorch state dictionaries. DPR is
+not yet connected to `main.py` or a training pipeline.
+
 ## Structure
 
 ```
