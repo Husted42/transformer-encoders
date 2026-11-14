@@ -3,4 +3,6 @@ transformers
 torch
 datasets
 scipy
+matplotlib
+faiss-cpu
 .

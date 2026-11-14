@@ -1,0 +1,62 @@
+{
+  "builder_name": "parquet",
+  "citation": "",
+  "config_name": "main",
+  "dataset_name": "fiqa",
+  "dataset_size": 18198182,
+  "description": "",
+  "download_size": 10701030,
+  "features": {
+    "question": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "text": {
+      "feature": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "_type": "List"
+    },
+    "query_id": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "document_id": {
+      "feature": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "_type": "List"
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 28899212,
+  "splits": {
+    "train": {
+      "name": "train",
+      "num_bytes": 15015505,
+      "num_examples": 5500,
+      "dataset_name": "fiqa"
+    },
+    "validation": {
+      "name": "validation",
+      "num_bytes": 1355132,
+      "num_examples": 500,
+      "dataset_name": "fiqa"
+    },
+    "test": {
+      "name": "test",
+      "num_bytes": 1827545,
+      "num_examples": 648,
+      "dataset_name": "fiqa"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}

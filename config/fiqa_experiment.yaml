@@ -4,7 +4,7 @@ defaults:
   - retriever: tf_idf
 
 
-device: cpu
+device: auto
 base_path: "."
 top_k: 10
 
