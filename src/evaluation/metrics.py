@@ -14,3 +14,13 @@ def Evaluate(relevancies: list[list[bool]], queries: list[Query]):
     
     scores['recall'] = total_recall / n_queries
     return scores
+
+
+def mean_recall(relevancies: list[list[bool]], queries: list[Query]) -> float:
+    """Mean fraction of known relevant documents retrieved for each query."""
+    if not queries or len(relevancies) != len(queries):
+        raise ValueError("Recall requires the same nonzero number of queries and result lists.")
+    counts = [query.getNumberOfRelevantDocuments() for query in queries]
+    if any(count < 1 for count in counts):
+        raise ValueError("Each query must have at least one relevant document.")
+    return sum(sum(row) / count for row, count in zip(relevancies, counts)) / len(queries)

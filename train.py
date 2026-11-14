@@ -10,7 +10,7 @@ from omegaconf import OmegaConf
 
 from src.data_utils.corpus import Corpus
 from src.data_utils.query import Query
-from src.evaluation.metrics import Evaluate
+from src.evaluation.metrics import mean_recall
 from src.retrievers.dpr import DPR
 from src.retrievers.utils import retrieveQueryAndGetRelevancies
 from src.training.trainer import Trainer
@@ -122,7 +122,7 @@ def main(cfg):
             print(f"Building the document index for validation at epoch {epoch}...")
             dpr.build_index(documents)
             relevancies = retrieveQueryAndGetRelevancies(dpr, validation_queries, k=cfg.top_k)
-            score = Evaluate(relevancies, validation_queries)["recall"]
+            score = mean_recall(relevancies, validation_queries)
             print(f"Epoch {epoch}: validation recall@{cfg.top_k}={score:.4f} "
                   f"({len(validation_queries)} queries)")
             if best_recall is None or score > best_recall:

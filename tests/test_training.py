@@ -1,6 +1,7 @@
 import contextlib
 import csv
 import io
+import json
 import re
 import tempfile
 import unittest
@@ -283,7 +284,8 @@ class DPRTrainingTests(unittest.TestCase):
             all_documents=self.rows,
             relevant_ids={row["query_id"]: row["document_id"] for row in validation},
         )
-        with patch("train.Corpus", return_value=corpus):
+        with patch("train.Corpus", return_value=corpus), \
+                patch("train.mean_recall", side_effect=[0.1, 0.4, 0.4]):
             with contextlib.redirect_stdout(io.StringIO()) as output:
                 train_main.__wrapped__(self.cfg)
         checkpoint_dir = Path(self.cfg.training.output_dir)
@@ -294,6 +296,14 @@ class DPRTrainingTests(unittest.TestCase):
         self.assertTrue((checkpoint_dir / "query_encoder.pt").is_file())
         self.assertTrue((checkpoint_dir / "document_encoder.pt").is_file())
         self.assertTrue((checkpoint_dir / "config.yaml").is_file())
+        with (checkpoint_dir / "best" / "metadata.json").open(encoding="utf-8") as file:
+            metadata = json.load(file)
+        self.assertEqual(metadata["epoch"], 5)
+        self.assertEqual(metadata["validation_recall"], 0.4)
+        for name in ("query_encoder.pt", "document_encoder.pt"):
+            best = torch.load(checkpoint_dir / "best" / name, weights_only=True)
+            epoch = torch.load(checkpoint_dir / "epoch_005" / name, weights_only=True)
+            self.assertTrue(all(torch.equal(best[key], epoch[key]) for key in best))
         for name in ("loss.png", "training_scores.png", "validation_recall.png"):
             self.assertEqual((checkpoint_dir / name).read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
         with (checkpoint_dir / "training_history.csv").open(newline="", encoding="utf-8") as file:
