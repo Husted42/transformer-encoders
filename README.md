@@ -28,6 +28,17 @@ DPR trains separate query and passage instances of the project's custom Transfor
 python train.py retriever=dpr training.output_dir=outputs/dpr/run-01
 ```
 
+### DPR grid search
+
+```bash
+python grid_search.py --output outputs/dpr/grid-01
+```
+
+```bash
+python grid_search.py --output outputs/dpr/grid-smoke --epochs 2 \
+  --override training.batch_size=16 --override retriever.batch_size=16
+```
+
 ## Structure
 
 ```

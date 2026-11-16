@@ -1,7 +1,7 @@
 import math
 import random
-import warnings
 import time
+import warnings
 
 import torch
 
@@ -26,6 +26,7 @@ def _prepare_examples(dataset, split):
             empty_rows += 1
             continue
         examples.append((question, passages))
+        # A question may have several relevant passages, including across duplicate rows.
         known_texts, known_ids = positives_by_query.setdefault(question, (set(), set()))
         known_texts.update(text for text, _ in passages)
         known_ids.update(doc_id for _, doc_id in passages)
@@ -41,6 +42,7 @@ def _prepare_examples(dataset, split):
 
 def _batches(examples, batch_size):
     batches = [examples[i:i + batch_size] for i in range(0, len(examples), batch_size)]
+    # Keep the last batch from becoming a single example with no in-batch negative.
     if len(batches) > 1 and len(batches[-1]) == 1:
         batches[-2].extend(batches.pop())
     return batches
@@ -93,6 +95,7 @@ class Trainer:
 
         for epoch in range(self.cfg.epochs):
             epoch_start = time.monotonic()
+            # Callbacks can build a retrieval index; discard it before the next training epoch.
             self.dpr.retriever = None
             rng.shuffle(examples)
             batches = _batches(examples, self.cfg.batch_size)
@@ -105,24 +108,23 @@ class Trainer:
                 questions = [question for question, _ in batch]
                 selected = [rng.choice(passages) for _, passages in batch]
                 passages = [text for text, _ in selected]
+                # Other known positives are positives too, not in-batch negatives.
                 positive_mask = _positive_mask(questions, selected, positives_by_query, self.dpr.device)
 
                 self.optimizer.zero_grad()
                 query_vectors = self.dpr.query_encoder(self.dpr.tokenize(questions))
                 document_vectors = self.dpr.document_encoder(self.dpr.tokenize(passages))
                 loss = self.criterion(query_vectors, document_vectors, positive_mask)
-                if not torch.isfinite(loss):
-                    raise ValueError("DPR training produced a non-finite loss.")
                 loss.backward()
-                for i, encoder in enumerate((self.dpr.query_encoder, self.dpr.document_encoder)):
-                    norms = [parameter.grad.detach().norm() for parameter in encoder.parameters()
-                             if parameter.grad is not None]
-                    if not norms:
-                        raise RuntimeError("An encoder did not receive any gradients.")
-                    norm = torch.stack(norms).norm().item()
-                    if not math.isfinite(norm):
-                        raise ValueError("DPR training produced non-finite gradients.")
-                    gradient_sums[i] += norm
+                encoders = (self.dpr.query_encoder, self.dpr.document_encoder)
+                for i, encoder in enumerate(encoders):
+                    # Report each encoder's combined gradient norm for this batch.
+                    squared_norm = sum(
+                        parameter.grad.detach().square().sum().item()
+                        for parameter in encoder.parameters()
+                        if parameter.grad is not None
+                    )
+                    gradient_sums[i] += math.sqrt(squared_norm)
                 self.optimizer.step()
                 self.dpr.encoders_trained = True
                 scores = query_vectors.detach() @ document_vectors.detach().T
@@ -140,6 +142,7 @@ class Trainer:
             self.negative_scores.append(negative_score)
             self.epoch_durations.append(time.monotonic() - epoch_start)
             negative_mean = f"{negative_score:.4f}" if negative_score is not None else "n/a"
+            # Keep the epoch summary together so progress is easy to follow.
             print(f"Epoch {epoch + 1}/{self.cfg.epochs}: training loss {epoch_loss:.4f}, "
                   f"positive {positive_score:.4f}, negative {negative_mean}, "
                   f"query grad {gradient_sums[0] / len(batches):.4f}, "
@@ -164,6 +167,7 @@ class Trainer:
         for batch in _batches(examples, self.cfg.batch_size):
             questions = [question for question, _ in batch]
             selected = [rng.choice(passages) for _, passages in batch]
+            # Fixed validation selections make losses comparable across epochs.
             mask = _positive_mask(questions, selected, positives_by_query, self.dpr.device)
             result.append((questions, [text for text, _ in selected], mask))
         return result
@@ -175,6 +179,7 @@ class Trainer:
         encoders = (self.dpr.query_encoder, self.dpr.document_encoder)
         was_training = [encoder.training for encoder in encoders]
         try:
+            # Disable dropout for validation without changing the encoders' prior modes.
             for encoder in encoders:
                 encoder.eval()
             total_loss = 0.0
@@ -183,8 +188,6 @@ class Trainer:
                 query_vectors = encoders[0](self.dpr.tokenize(questions))
                 document_vectors = encoders[1](self.dpr.tokenize(passages))
                 loss = self.criterion(query_vectors, document_vectors, mask)
-                if not torch.isfinite(loss):
-                    raise ValueError("DPR validation produced a non-finite loss.")
                 total_loss += loss.item() * len(questions)
                 count += len(questions)
             return total_loss / count

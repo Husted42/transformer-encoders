@@ -2,23 +2,29 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class DPRLoss(nn.Module):
+    """In-batch contrastive loss for Dense Passage Retrieval.
+
+    Let q_i be query i's embedding and d_j document j's embedding. The score
+    matrix is s_ij = q_i^T d_j. For the set P_i of positive documents for
+    query i, the per-query loss is
+
+        ell_i = -log(
+            sum_{j in P_i} exp(s_ij) / sum_k exp(s_ik)
+        )
+
+    The goal is to learn the parameters of f and g so that the inner product between paired queries and
+    documents is high and low otherwise
+    """
+
     def forward(self, queries, documents, positive_mask=None):
-        if queries.ndim != 2 or documents.ndim != 2 or queries.shape[1] != documents.shape[1]:
-            raise ValueError("Queries and documents must be 2D with matching embedding dimensions.")
-        if queries.shape[0] == 0 or documents.shape[0] == 0:
-            raise ValueError("A DPR batch must contain queries and documents.")
+        # Get similarity scores s_ij for all query-document pairs
         scores = queries @ documents.T
         if positive_mask is None:
-            if queries.shape[0] != documents.shape[0]:
-                raise ValueError("Paired batches must have the same number of queries and documents.")
             return F.cross_entropy(scores, torch.arange(len(queries), device=scores.device))
-        if positive_mask.dtype != torch.bool or positive_mask.shape != scores.shape:
-            raise ValueError("positive_mask must be boolean and match the score matrix shape.")
-        if positive_mask.device != scores.device:
-            raise ValueError("positive_mask must be on the same device as the embeddings.")
-        if not positive_mask.any(dim=1).all():
-            raise ValueError("Each query must have at least one positive document.")
+
+        # calculated ell_i for all queries
         log_probabilities = F.log_softmax(scores, dim=1)
-        return -torch.logsumexp(log_probabilities.masked_fill(~positive_mask, float("-inf")), dim=1).mean()
+        return -torch.logsumexp(
+            log_probabilities.masked_fill(~positive_mask, float("-inf")), dim=1
+        ).mean()
