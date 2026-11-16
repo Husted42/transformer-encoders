@@ -19,7 +19,18 @@ class Corpus:
             shutil.rmtree(f'{base_dir}/raw')
         else:
             self.ds = load_from_disk(f'{base_dir}/{self.dataset_name}')
+            self.relevant_ids = self.__load_relevant_ids()
 
+    def __load_relevant_ids(self):
+        # query_id and document_id are persisted columns, so the mapping can be rebuilt from disk
+        relevant_ids = {}
+        for key in self.ds:
+            columns = self.ds[key].column_names
+            if 'query_id' not in columns or 'document_id' not in columns:
+                raise ValueError(f"Cached dataset '{self.dataset_name}' lacks query_id/document_id columns. "
+                                 "Delete the cached folder so it is processed again.")
+            relevant_ids.update(zip(self.ds[key]['query_id'], self.ds[key]['document_id']))
+        return relevant_ids
 
     @property
     def train(self):
