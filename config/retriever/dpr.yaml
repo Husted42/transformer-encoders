@@ -1,1 +1,7 @@
+defaults:
+  - /model@_global_.model: encoder
+  - /training@_global_.training: dpr
+  - _self_
+
 method: "dpr"
+batch_size: 32

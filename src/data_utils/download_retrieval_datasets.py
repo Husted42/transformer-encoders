@@ -1,6 +1,3 @@
-import os
-os.environ["HF_HUB_OFFLINE"] = "1"
-os.environ["HF_DATASETS_OFFLINE"] = "1"
 from datasets import load_dataset
 
 def get_fiqa_dataset(base_dir: str):

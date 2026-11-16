@@ -3,5 +3,10 @@ transformers
 torch
 datasets
 scipy
+<<<<<<< HEAD
+matplotlib
+faiss-cpu
+=======
 re
+>>>>>>> 8a306a23bc0d1109c1037ea3779f077544110031
 .

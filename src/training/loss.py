@@ -1,18 +1,30 @@
 import torch
 import torch.nn as nn
-
+import torch.nn.functional as F
 
 class DPRLoss(nn.Module):
-    def __init__(self):
-        super().__init__()
-    
-    def forward(self, queries: torch.tensor, documents: torch.tensor):
-        """
-        @param queries: batch_size x embedding_dim
-        @param documents: batch_size x embedding_dim
+    """In-batch contrastive loss for Dense Passage Retrieval.
 
-        Computes cross entropy between the query 
+    Let q_i be query i's embedding and d_j document j's embedding. The score
+    matrix is s_ij = q_i^T d_j. For the set P_i of positive documents for
+    query i, the per-query loss is
 
-        Returns: A 1d torch tensor 
-        """
-        raise NotImplementedError()
+        ell_i = -log(
+            sum_{j in P_i} exp(s_ij) / sum_k exp(s_ik)
+        )
+
+    The goal is to learn the parameters of f and g so that the inner product between paired queries and
+    documents is high and low otherwise
+    """
+
+    def forward(self, queries, documents, positive_mask=None):
+        # Get similarity scores s_ij for all query-document pairs
+        scores = queries @ documents.T
+        if positive_mask is None:
+            return F.cross_entropy(scores, torch.arange(len(queries), device=scores.device))
+
+        # calculated ell_i for all queries
+        log_probabilities = F.log_softmax(scores, dim=1)
+        return -torch.logsumexp(
+            log_probabilities.masked_fill(~positive_mask, float("-inf")), dim=1
+        ).mean()
