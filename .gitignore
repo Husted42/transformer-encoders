@@ -11,6 +11,7 @@ fiqa/
 
 # 
 outputs/
+tests/output/
 retrieval_data/
 .DS_Store
 
