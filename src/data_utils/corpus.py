@@ -1,114 +1,125 @@
-import os
-import shutil
+import hashlib
+from pathlib import Path
+
 from datasets import Dataset, DatasetDict, load_from_disk
+
 from src.data_utils.download_retrieval_datasets import get_fiqa_dataset, get_squad_dataset
 
-class Corpus:
-    def __init__(self, dataset_name: str, base_dir: str):
-        self.dataset_name = dataset_name
-        if not os.path.exists(f'{base_dir}/{self.dataset_name}'):
-            raw_data_dir = f'{base_dir}/raw'
-            os.makedirs(raw_data_dir, exist_ok=True)
-            # load and process data
-            self.ds = self.__load_data(base_dir=raw_data_dir)
-            self.__rename_columns()
-            self.relevant_ids = self.__assign_ids()
-            os.makedirs(f'{base_dir}/{self.dataset_name}', exist_ok=True)
-            DatasetDict(self.ds).save_to_disk(f'{base_dir}/{self.dataset_name}')
-            print(f'Saved {self.dataset_name} dataset to path {base_dir}/{self.dataset_name}.')
-            shutil.rmtree(f'{base_dir}/raw')
-        else:
-            self.ds = load_from_disk(f'{base_dir}/{self.dataset_name}')
-            self.relevant_ids = self.__load_relevant_ids()
 
-    def __load_relevant_ids(self):
-        # query_id and document_id are persisted columns, so the mapping can be rebuilt from disk
-        relevant_ids = {}
-        for key in self.ds:
-            columns = self.ds[key].column_names
-            if 'query_id' not in columns or 'document_id' not in columns:
-                raise ValueError(f"Cached dataset '{self.dataset_name}' lacks query_id/document_id columns. "
-                                 "Delete the cached folder so it is processed again.")
-            if any(isinstance(text, str) for text in self.ds[key]['text']):
-                raise ValueError(f"Cached dataset '{self.dataset_name}' has scalar passages and invalid IDs; "
-                                 "reprocess it into a new dataset directory.")
-            relevant_ids.update(zip(self.ds[key]['query_id'], self.ds[key]['document_id']))
-        return relevant_ids
+class Corpus:
+    """A shared passage collection and split-specific query relevance judgments."""
+
+    def __init__(self, dataset_name: str, base_dir: str):
+        if dataset_name not in {"fiqa", "squad"}:
+            raise ValueError(f"Unsupported dataset: {dataset_name}")
+        self.dataset_name = dataset_name
+        self.version = f"{dataset_name}-retrieval-v1"
+        path = Path(base_dir) / self.version
+        if path.exists():
+            self.ds = load_from_disk(str(path))
+        else:
+            data = (self._fiqa(get_fiqa_dataset(str(Path(base_dir) / "downloads")))
+                    if dataset_name == "fiqa"
+                    else self._squad(get_squad_dataset(str(Path(base_dir) / "downloads"))))
+            self.ds = DatasetDict(data)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self.ds.save_to_disk(str(path))
+        self._validate()
+
+    @staticmethod
+    def _fiqa(data):
+        corpus, queries, qrels = data
+        documents = {}
+        for row in corpus:
+            doc_id = str(row["_id"])
+            if doc_id in documents:
+                raise ValueError(f"Duplicate corpus ID {doc_id}.")
+            text = "\n".join(part.strip() for part in (row["title"], row["text"]) if part and part.strip())
+            documents[doc_id] = text
+        query_texts = {}
+        for row in queries:
+            query_id = str(row["_id"])
+            if query_id in query_texts:
+                raise ValueError(f"Duplicate query ID {query_id}.")
+            query_texts[query_id] = row["text"]
+        result = {"corpus": Dataset.from_dict({
+            "text": [[text] for text in documents.values()],
+            "document_id": [[doc_id] for doc_id in documents],
+        })}
+        for split, labels in qrels.items():
+            positives = {}
+            for label in labels:
+                query_id, doc_id = str(label["query-id"]), str(label["corpus-id"])
+                if query_id not in query_texts or doc_id not in documents:
+                    raise ValueError(f"Dangling qrel: query {query_id}, document {doc_id}.")
+                if label["score"] > 0:
+                    positives.setdefault(query_id, set()).add(doc_id)
+            rows = []
+            for query_id, ids in positives.items():
+                ids = sorted(ids)
+                rows.append({"query_id": query_id, "question": query_texts[query_id],
+                             "document_id": ids, "text": [documents[doc_id] for doc_id in ids]})
+            result[split] = Dataset.from_list(rows)
+        return result
+
+    @staticmethod
+    def _squad(data):
+        documents = {}
+        result = {}
+        for split, examples in data.items():
+            rows = []
+            for row in examples:
+                text = row["context"]
+                doc_id = hashlib.sha256(text.encode("utf-8")).hexdigest()
+                if doc_id in documents and documents[doc_id] != text:
+                    raise ValueError("SQuAD context hash collision.")
+                documents[doc_id] = text
+                rows.append({"query_id": f"{split}:{row['id']}", "question": row["question"],
+                             "document_id": [doc_id], "text": [text]})
+            result[split] = Dataset.from_list(rows)
+        result["corpus"] = Dataset.from_dict({
+            "text": [[text] for text in documents.values()],
+            "document_id": [[doc_id] for doc_id in documents],
+        })
+        return result
+
+    def _validate(self):
+        if "corpus" not in self.ds or "train" not in self.ds or "validation" not in self.ds:
+            raise ValueError(f"Invalid retrieval cache {self.version}: missing corpus or splits.")
+        documents = {}
+        for row in self.ds["corpus"]:
+            if len(row["document_id"]) != 1 or len(row["text"]) != 1:
+                raise ValueError("Corpus entries must have one ID and one text.")
+            doc_id, text = row["document_id"][0], row["text"][0]
+            if not doc_id or not isinstance(text, str) or doc_id in documents:
+                raise ValueError(f"Invalid or duplicate document ID: {doc_id}.")
+            documents[doc_id] = text
+        self.relevant_ids = {}
+        for split in ("train", "validation", "test"):
+            if split not in self.ds:
+                continue
+            for row in self.ds[split]:
+                query_id, ids = row["query_id"], row["document_id"]
+                if query_id in self.relevant_ids or not row["question"].strip() or not ids:
+                    raise ValueError(f"Invalid or duplicate query ID: {query_id}.")
+                if len(ids) != len(set(ids)) or len(ids) != len(row["text"]):
+                    raise ValueError(f"Invalid qrels for query {query_id}.")
+                if any(documents.get(doc_id) != text for doc_id, text in zip(ids, row["text"])):
+                    raise ValueError(f"Dangling or inconsistent qrel for query {query_id}.")
+                self.relevant_ids[query_id] = ids
 
     @property
     def train(self):
-        return self.ds.get('train', None)
-    
+        return self.ds.get("train")
+
     @property
     def val(self):
-        return self.ds.get('validation', None)
+        return self.ds.get("validation")
 
     @property
     def test(self):
-        return self.ds.get('test', None)
+        return self.ds.get("test")
 
     @property
     def all_documents(self):
-        train_text, train_ids = list(self.train['text']), list(self.train['document_id'])
-        val_text, val_ids =     list(self.val['text']), list(self.val['document_id'])
-        
-        all_text = train_text + val_text
-        all_ids = train_ids   + val_ids
-
-        if self.test is not None:
-            test_text, test_ids = list(self.test['text']), list(self.test['document_id'])
-            all_text += test_text
-            all_ids  += test_ids
-
-        return Dataset.from_dict({'text': all_text,
-                                  'document_id': all_ids})
-
-
-    def __load_data(self, base_dir) -> dict[Dataset]:
-        assert self.dataset_name in ['squad', 'fiqa'], f'Dataset {self.dataset_name} not supported. Options are ["squad", "fiqa"]'
-        
-        if self.dataset_name == 'fiqa':
-            ds = get_fiqa_dataset(base_dir)
-
-        elif self.dataset_name == 'squad':
-            ds = get_squad_dataset(base_dir)
-
-        return {key: ds[key] for key in ds.keys()}
-
-    def __rename_columns(self) -> dict[Dataset]:
-        column_mapping = {'fiqa':  'ground_truths',
-                          'squad': 'context'
-                         }
-        
-        for key in self.ds:
-            self.ds[key] = self.ds[key].rename_column(column_mapping[self.dataset_name], 'text')
-            if self.dataset_name == 'squad':
-                self.ds[key] = self.ds[key].map(lambda row: {'text': [row['text']]})
-        return self.ds
-
-    def __assign_ids(self):
-        q_id_counter = 0
-        doc_id_counter = 0
-        relevant_document_ids = {}
-
-        for key in self.ds:
-            query_ids = []
-            document_ids = []
-            for i in range(len(self.ds[key])):
-                query_ids.append(f'q{q_id_counter}')
-                documents = self.ds[key]['text'][i]
-                relevant_ids = []
-                for doc in documents:
-                    relevant_ids.append(f'doc{doc_id_counter}')
-                    doc_id_counter += 1
-                
-                document_ids.append(relevant_ids)
-                
-                relevant_document_ids[f'q{q_id_counter}'] = relevant_ids
-                q_id_counter += 1
-                
-            self.ds[key] = self.ds[key].add_column('query_id', query_ids)
-            self.ds[key] = self.ds[key].add_column('document_id', document_ids)
-
-        return relevant_document_ids
-            
+        return self.ds["corpus"]

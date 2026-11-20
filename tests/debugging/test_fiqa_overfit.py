@@ -19,7 +19,7 @@ from src.training.trainer import Trainer
 
 
 ROOT = Path(__file__).resolve().parents[2]
-FIQA_PATH = ROOT / "retrieval_data" / "fiqa"
+FIQA_PATH = ROOT / "retrieval_data" / "fiqa-retrieval-v1"
 BATCH_SIZE = 8
 EPOCHS = 40
 
@@ -40,7 +40,8 @@ def fixed_pairs(train):
         if any(text in positives or previous["text"][0] in all_positives
                for previous, positives in zip(rows, known_passages)):
             continue
-        rows.append({"question": row["question"], "text": [text], "document_id": [doc_id]})
+        rows.append({"query_id": row["query_id"], "question": row["question"],
+                     "text": [text], "document_id": [doc_id]})
         known_passages.append(all_positives)
         if len(rows) == BATCH_SIZE:
             return rows

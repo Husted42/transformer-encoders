@@ -10,8 +10,9 @@ from omegaconf import OmegaConf
 
 from src.data_utils.corpus import Corpus
 from src.data_utils.query import Query
-from src.evaluation.metrics import mean_recall
+from src.evaluation.metrics import mean_recall, retrieval_metrics
 from src.retrievers.dpr import DPR
+from src.retrievers.checkpoint import checkpoint_hash
 from src.retrievers.utils import retrieveQueryAndGetRelevancies
 from src.training.trainer import Trainer
 
@@ -20,7 +21,7 @@ def save_training_history(output_dir, history, top_k):
     with (output_dir / "training_history.csv").open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=[
             "epoch", "training_loss", "validation_loss", "positive_score",
-            "negative_score", "score_gap", "validation_recall",
+            "negative_score", "score_gap", "validation_recall", "validation_mrr",
             "learning_rate", "epoch_seconds",
         ])
         writer.writeheader()
@@ -118,11 +119,13 @@ def main(cfg):
         if validation_loss is not None:
             print(f"Epoch {epoch}: validation loss {validation_loss:.4f}")
         score = None
+        mrr = None
         if epoch == 1 or epoch % cfg.training.validation_every_epochs == 0 or epoch == cfg.training.epochs:
             print(f"Building the document index for validation at epoch {epoch}...")
             dpr.build_index(documents)
             relevancies = retrieveQueryAndGetRelevancies(dpr, validation_queries, k=cfg.top_k)
             score = mean_recall(relevancies, validation_queries)
+            mrr = retrieval_metrics(relevancies, validation_queries, cfg.top_k)[f"mrr@{cfg.top_k}"]
             print(f"Epoch {epoch}: validation recall@{cfg.top_k}={score:.4f} "
                   f"({len(validation_queries)} queries)")
             if best_recall is None or score > best_recall:
@@ -133,7 +136,12 @@ def main(cfg):
                 torch.save(dpr.document_encoder.state_dict(), best_dir / "document_encoder.pt")
                 metadata = {
                     "epoch": epoch, "validation_recall": score, "top_k": cfg.top_k,
-                    "validation_queries": len(validation_queries),
+                    "validation_queries": len(validation_queries), "validation_mrr": mrr,
+                    "corpus_version": getattr(corpus, "version", None),
+                    "checkpoint_hashes": {
+                        "query": checkpoint_hash(best_dir / "query_encoder.pt"),
+                        "document": checkpoint_hash(best_dir / "document_encoder.pt"),
+                    },
                     "config": OmegaConf.to_container(cfg, resolve=True),
                 }
                 with (best_dir / "metadata.json").open("w", encoding="utf-8") as file:
@@ -149,6 +157,7 @@ def main(cfg):
             "negative_score": negative_score,
             "score_gap": positive_score - negative_score if negative_score is not None else None,
             "validation_recall": score,
+            "validation_mrr": mrr,
             "learning_rate": trainer.optimizer.param_groups[0]["lr"],
             "epoch_seconds": trainer.epoch_durations[-1],
         })

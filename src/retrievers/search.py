@@ -9,10 +9,13 @@ def search(query, checkpoint, index, k=10, device="auto"):
     if not query.strip():
         raise ValueError("Query must not be empty.")
     store = FaissVectorStore.load(index)
-    dpr, _, hashes = load_checkpoint(checkpoint, device)
+    dpr, metadata, hashes = load_checkpoint(checkpoint, device)
     if hashes != store.metadata["checkpoint_hashes"]:
         raise ValueError("Checkpoint does not match the indexed encoders; rebuild the index.")
+    if metadata.get("corpus_version") != store.metadata.get("corpus_version"):
+        raise ValueError("Checkpoint corpus version does not match the index.")
     if (dpr.cfg.model.tokenizer_name != store.metadata["tokenizer"]
+            or dpr.cfg.model.get("tokenizer_revision") != store.metadata.get("tokenizer_revision")
             or dpr.cfg.model.max_len != store.metadata["max_len"]
             or dpr.cfg.model.pooling_type != store.metadata["pooling_type"]):
         raise ValueError("Checkpoint tokenizer or encoder settings do not match the index.")

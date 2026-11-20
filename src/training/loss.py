@@ -18,11 +18,29 @@ class DPRLoss(nn.Module):
     """
 
     def forward(self, queries, documents, positive_mask=None):
+        if queries.ndim != 2 or documents.ndim != 2 or queries.shape[1] != documents.shape[1]:
+            raise ValueError("Query and document embeddings must be matrices with the same width.")
+        if not len(queries) or not len(documents):
+            raise ValueError("Query and document embeddings must be nonempty.")
+        if queries.device != documents.device:
+            raise ValueError("Query and document embeddings must be on the same device.")
+        if not torch.isfinite(queries).all() or not torch.isfinite(documents).all():
+            raise ValueError("Query and document embeddings must be finite.")
         # Get similarity scores s_ij for all query-document pairs
         scores = queries @ documents.T
+        if not torch.isfinite(scores).all():
+            raise ValueError("Similarity scores must be finite.")
         if positive_mask is None:
+            if len(queries) != len(documents):
+                raise ValueError("Diagonal positives require equal query and document counts.")
             return F.cross_entropy(scores, torch.arange(len(queries), device=scores.device))
 
+        if positive_mask.dtype != torch.bool:
+            raise ValueError("positive_mask must be boolean.")
+        if positive_mask.shape != scores.shape or positive_mask.device != scores.device:
+            raise ValueError("positive_mask must match the score matrix shape and device.")
+        if not positive_mask.any(dim=1).all():
+            raise ValueError("Every query must have at least one positive.")
         # calculated ell_i for all queries
         log_probabilities = F.log_softmax(scores, dim=1)
         return -torch.logsumexp(

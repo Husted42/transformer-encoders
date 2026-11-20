@@ -13,6 +13,8 @@ def build_index(checkpoint, output, device="auto"):
     dpr, checkpoint_metadata, hashes = load_checkpoint(checkpoint, device)
     cfg = dpr.cfg
     corpus = Corpus(dataset_name=cfg.dataset.name, base_dir=f"{cfg.base_path}/retrieval_data")
+    if checkpoint_metadata.get("corpus_version") != getattr(corpus, "version", None):
+        raise ValueError("Checkpoint corpus version does not match the index corpus.")
     passages = DocumentDataset(corpus.all_documents).GetDocuments()
     if not passages:
         raise ValueError("Cannot index an empty document collection.")
@@ -26,7 +28,9 @@ def build_index(checkpoint, output, device="auto"):
     store = FaissVectorStore(cfg.model.d_model, {
         "checkpoint_hashes": hashes, "checkpoint_epoch": checkpoint_metadata["epoch"],
         "pooling_type": cfg.model.pooling_type, "tokenizer": cfg.model.tokenizer_name,
+        "tokenizer_revision": cfg.model.get("tokenizer_revision"),
         "max_len": cfg.model.max_len, "dataset": cfg.dataset.name,
+        "corpus_version": getattr(corpus, "version", None),
     })
     store.build(documents, torch.cat(vectors).numpy())
     store.save(output)

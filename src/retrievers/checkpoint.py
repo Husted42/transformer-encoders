@@ -27,4 +27,6 @@ def load_checkpoint(directory, device="auto"):
         "query": checkpoint_hash(cfg.model.query_encoder_weights_path),
         "document": checkpoint_hash(cfg.model.document_encoder_weights_path),
     }
+    if "checkpoint_hashes" in metadata and metadata["checkpoint_hashes"] != hashes:
+        raise ValueError("Checkpoint files do not match their recorded hashes.")
     return DPR(cfg), metadata, hashes

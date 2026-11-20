@@ -1,65 +1,34 @@
-from scipy.sparse import lil_matrix
-from src.retrievers.tf_idf import TFIDF
-from src.data_utils.document import Document
 import numpy as np
 
-class BM25(TFIDF):
-    def __init__(self, documents: list[dict] = None, index_path: str = None, k1: float = 1.5, b: float = 0.75) -> None:
-        super(BM25, self).__init__(documents, index_path)
-        self.k1 = k1
-        self.b = b
-        self.idf_bm25 = self.GetInverseDocumentFrequenciesBM25()
-    
-    def GetDocumentLengths(self):
-        document_lengths = {}
-        average_document_length = 0
-        for document in self.index.GetDocuments():
-            length = len(self.PreprocessText(document.GetText()))
-            document_lengths[document] = length
-            average_document_length += length
-        return document_lengths, average_document_length/len(self.index.GetDocuments())
+from src.retrievers.tf_idf import TFIDF
 
-    def GetInverseDocumentFrequenciesBM25(self) -> dict[str, float]:
-        """
-        Returns a dict with terms and their corresponding inverse document frequencies.
-        """
-        n_docs = len(self.index.GetDocuments())
-        doc_freq=self.GetDocumentFrequencies()
-        bm25_inverse_doc_freq={}
-        for i in doc_freq:
-            bm25_inverse_doc_freq[i]=np.log((n_docs+1)/(doc_freq[i]+0.5))
-        return bm25_inverse_doc_freq
+
+class BM25(TFIDF):
+    def __init__(self, documents=None, index_path=None, k1=1.5, b=0.75):
+        if not np.isfinite(k1) or k1 <= 0 or not np.isfinite(b) or not 0 <= b <= 1:
+            raise ValueError("BM25 requires positive k1 and b between 0 and 1.")
+        super().__init__(documents, index_path)
+        self.k1, self.b = k1, b
+        self.idf_bm25 = self.GetInverseDocumentFrequenciesBM25()
+        self.bm25_matrix = self.GetDocumentsBM25Vectors()
+
+    def GetDocumentLengths(self):
+        lengths = [sum(counts.values()) for counts in self.counts]
+        return dict(zip(self.index.GetDocuments(), lengths)), np.mean(lengths) if lengths else 0.0
+
+    def GetInverseDocumentFrequenciesBM25(self):
+        n_docs = len(self.counts)
+        return {term: np.log(1 + (n_docs - count + 0.5) / (count + 0.5))
+                for term, count in self.GetDocumentFrequencies().items()}
 
     def GetDocumentsBM25Vectors(self):
-        self.term_to_index = {term: idx for idx, term in enumerate(self.corpus_vocabulary)}
-        
-        # Initialize a sparse matrix
-        n_documents = len(self.index.GetDocuments())
-        n_terms = len(self.corpus_vocabulary)
-        bm25_matrix = lil_matrix((n_documents, n_terms), dtype=np.float32)
+        lengths = [sum(counts.values()) for counts in self.counts]
+        average = np.mean(lengths) if lengths else 0.0
+        if not average:
+            return self._matrix(lambda row, term, count, length: 0.0)
+        return self._matrix(lambda row, term, count, length:
+                            self.idf_bm25[term] * count * (self.k1 + 1) /
+                            (count + self.k1 * (1 - self.b + self.b * length / average)))
 
-        docs=self.index.GetDocuments()
-        doc_length=self.GetDocumentLengths()[0]
-        avg_doc_length=self.GetDocumentLengths()[1]
-        for term in self.corpus_vocabulary:
-            term_idx=self.term_to_index[term]
-            term_idf=self.idf_bm25[term]
-            for doc_idx,doc in enumerate(docs):
-                doc_term_count=self.GetDocumentTermCounts(doc)
-                tf=(doc_term_count[term]*(self.k1+1))/(doc_term_count[term]+self.k1*(1-self.b+self.b*(doc_length[doc]/avg_doc_length)))
-                bm25_matrix[doc_idx,term_idx]=tf*term_idf
-
-        return bm25_matrix.tocsr()   # Convert to CSR format for efficient row slicing
-
-    def CalculateScores(self, queries: list[str]):
-        """Calculate scores for a query
-        
-        Args:
-            query (str): The query to calculate scores for
-        
-        Returns:
-            np.array: An array of scores for each document
-        """
-        query_vector = self.QueryToVector(queries)
-        scores = query_vector.dot(self.bm25_matrix.T).toarray()
-        return scores
+    def CalculateScores(self, queries):
+        return self.QueryToVector(queries).dot(self.bm25_matrix.T).toarray()

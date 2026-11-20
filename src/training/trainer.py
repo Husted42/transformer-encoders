@@ -25,9 +25,9 @@ def _prepare_examples(dataset, split):
         if not passages:
             empty_rows += 1
             continue
-        examples.append((question, passages))
-        # A question may have several relevant passages, including across duplicate rows.
-        known_texts, known_ids = positives_by_query.setdefault(question, (set(), set()))
+        query_key = ("id", row["query_id"]) if "query_id" in row else ("text", question)
+        examples.append((query_key, question, passages))
+        known_texts, known_ids = positives_by_query.setdefault(query_key, (set(), set()))
         known_texts.update(text for text, _ in passages)
         known_ids.update(doc_id for _, doc_id in passages)
     if empty_passages or empty_rows:
@@ -48,10 +48,11 @@ def _batches(examples, batch_size):
     return batches
 
 
-def _positive_mask(questions, selected, positives_by_query, device):
+def _positive_mask(query_keys, selected, positives_by_query, device):
     return torch.tensor(
-        [[text in positives_by_query[question][0] or doc_id in positives_by_query[question][1]
-          for text, doc_id in selected] for question in questions],
+        [[doc_id in positives_by_query[key][1]
+          or (key[0] == "text" and text in positives_by_query[key][0])
+          for text, doc_id in selected] for key in query_keys],
         dtype=torch.bool,
         device=device,
     )
@@ -103,18 +104,24 @@ class Trainer:
             positive_sum = negative_sum = 0.0
             positive_count = negative_count = 0
             gradient_sums = [0.0, 0.0]
+            degenerate_batches = 0
 
             for batch in batches:
-                questions = [question for question, _ in batch]
-                selected = [rng.choice(passages) for _, passages in batch]
+                query_keys = [key for key, _, _ in batch]
+                questions = [question for _, question, _ in batch]
+                selected = [rng.choice(passages) for _, _, passages in batch]
                 passages = [text for text, _ in selected]
                 # Other known positives are positives too, not in-batch negatives.
-                positive_mask = _positive_mask(questions, selected, positives_by_query, self.dpr.device)
+                positive_mask = _positive_mask(query_keys, selected, positives_by_query, self.dpr.device)
+                if positive_mask.all():
+                    degenerate_batches += 1
 
                 self.optimizer.zero_grad()
                 query_vectors = self.dpr.query_encoder(self.dpr.tokenize(questions))
                 document_vectors = self.dpr.document_encoder(self.dpr.tokenize(passages))
                 loss = self.criterion(query_vectors, document_vectors, positive_mask)
+                if not torch.isfinite(loss):
+                    raise ValueError("Non-finite training loss.")
                 loss.backward()
                 encoders = (self.dpr.query_encoder, self.dpr.document_encoder)
                 for i, encoder in enumerate(encoders):
@@ -124,6 +131,8 @@ class Trainer:
                         for parameter in encoder.parameters()
                         if parameter.grad is not None
                     )
+                    if not math.isfinite(squared_norm):
+                        raise ValueError("Non-finite encoder gradients.")
                     gradient_sums[i] += math.sqrt(squared_norm)
                 self.optimizer.step()
                 self.dpr.encoders_trained = True
@@ -141,6 +150,12 @@ class Trainer:
             self.positive_scores.append(positive_score)
             self.negative_scores.append(negative_score)
             self.epoch_durations.append(time.monotonic() - epoch_start)
+            if degenerate_batches:
+                warnings.warn(
+                    f"{degenerate_batches} training batches had no known negatives and provide no contrastive signal.",
+                    UserWarning,
+                    stacklevel=2,
+                )
             negative_mean = f"{negative_score:.4f}" if negative_score is not None else "n/a"
             # Keep the epoch summary together so progress is easy to follow.
             print(f"Epoch {epoch + 1}/{self.cfg.epochs}: training loss {epoch_loss:.4f}, "
@@ -165,10 +180,11 @@ class Trainer:
         rng = random.Random(self.cfg.seed)
         result = []
         for batch in _batches(examples, self.cfg.batch_size):
-            questions = [question for question, _ in batch]
-            selected = [rng.choice(passages) for _, passages in batch]
+            query_keys = [key for key, _, _ in batch]
+            questions = [question for _, question, _ in batch]
+            selected = [rng.choice(passages) for _, _, passages in batch]
             # Fixed validation selections make losses comparable across epochs.
-            mask = _positive_mask(questions, selected, positives_by_query, self.dpr.device)
+            mask = _positive_mask(query_keys, selected, positives_by_query, self.dpr.device)
             result.append((questions, [text for text, _ in selected], mask))
         return result
 

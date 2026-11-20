@@ -18,7 +18,9 @@ class DPR:
         device = cfg.get("device", "cpu")
         self.device = torch.device(("cuda" if torch.cuda.is_available() else "cpu") if device == "auto" else device)
         tokenizer_name = cfg.model.get("tokenizer_name")
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name) if tokenizer_name else None
+        self.tokenizer = (AutoTokenizer.from_pretrained(
+            tokenizer_name, revision=cfg.model.get("tokenizer_revision")
+        ) if tokenizer_name else None)
         self.__load_models()
         self.retriever = None
         if documents is not None:

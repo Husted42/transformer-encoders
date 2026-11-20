@@ -15,6 +15,7 @@ from transformers import BertTokenizer
 from src.data_utils.query import Query
 from src.evaluation.metrics import mean_recall
 from src.retrievers.build_index import build_index
+from src.retrievers.checkpoint import load_checkpoint
 from src.retrievers.search import search
 from src.retrievers.vector_store import FaissVectorStore
 from train import main as train_main
@@ -101,6 +102,10 @@ class FaissPipelineTests(unittest.TestCase):
                 json.dump(index_metadata, file)
             with self.assertRaisesRegex(ValueError, "does not match"):
                 search("alpha", checkpoint, index, device="cpu")
+            with (checkpoint / "query_encoder.pt").open("ab") as file:
+                file.write(b"altered")
+            with self.assertRaisesRegex(ValueError, "recorded hashes"):
+                load_checkpoint(checkpoint, "cpu")
 
 
 if __name__ == "__main__":

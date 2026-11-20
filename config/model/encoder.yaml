@@ -1,5 +1,6 @@
 pooling_type: 'cls' # mean | cls | max
 tokenizer_name: bert-base-uncased
+tokenizer_revision: 86b5e0934494bd15c9632b12f734a8a67f723594
 vocab_size: null
 d_model: 128
 n_heads: 4
