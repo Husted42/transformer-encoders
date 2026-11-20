@@ -46,6 +46,10 @@ class Retriever(ABC):
         @param queries: The input text(s) to which relevant passages should be found.
         @param k: The number of relevant passages to retrieve for each input query.
         """
+        if k < 1:
+            raise ValueError("k must be positive.")
+        if not queries:
+            return []
         scores = self.CalculateScores(queries)
         ranked_documents = [[d for _, d in sorted(zip(query_scores, self.index.GetDocuments()), key=lambda pair: pair[0], reverse=True)] for query_scores in scores]
         return [ranked_document[:min(k, len(ranked_documents[0]))] for ranked_document in ranked_documents]

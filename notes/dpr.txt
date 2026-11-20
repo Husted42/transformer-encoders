@@ -1,0 +1,37 @@
+I think we got everything working, let's try to train the encoder
+
+´´´
+python train.py retriever=dpr training.output_dir=outputs/dpr/run-01
+´´´
+
+device: auto
+base_path: .
+top_k: 10
+dataset:
+  name: fiqa
+model:
+  pooling_type: cls
+  tokenizer_name: bert-base-uncased
+  vocab_size: null
+  d_model: 128
+  n_heads: 4
+  n_layers: 6
+  feed_forward_dim: 768
+  max_len: 128
+  padding_idx: null
+  dropout: 0.1
+  query_encoder_weights_path: null
+  document_encoder_weights_path: null
+training:
+  epochs: 20
+  batch_size: 64
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  seed: 42
+  output_dir: outputs/dpr/run-01
+  checkpoint_every_epochs: 5
+  validation_every_epochs: 1
+  validation_max_queries: 1000000
+retriever:
+  method: dpr
+  batch_size: 32

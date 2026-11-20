@@ -45,6 +45,8 @@ class VectorDatabase:
 
     # __init__ takes the dimensionality of the vectors and optional encoder information.
     def __init__(self, dim: int, encoder_info: Optional[dict] = None) -> None:
+        if not isinstance(dim, int) or dim < 1:
+            raise ValueError("Vector dimension must be a positive integer.")
         self.dim = dim
         self.index = FlatIndex()
         self.encoder_info = encoder_info or {}
@@ -64,6 +66,8 @@ class VectorDatabase:
 
         if vectors.ndim != 2 or vectors.shape[1] != self.dim:
             raise ValueError(f"Expected vectors of shape (N, {self.dim}), got {vectors.shape}.")
+        if not np.isfinite(vectors).all():
+            raise ValueError("Vectors must be finite.")
 
         return vectors
 
@@ -75,7 +79,8 @@ class VectorDatabase:
         """
         vectors = self._check(vectors)
 
-        if len(ids) != len(vectors) or len(set(ids)) != len(ids):
+        if len(ids) != len(vectors) or len(set(ids)) != len(ids) or any(
+                not isinstance(item, str) or not item.strip() for item in ids):
             raise ValueError("ids must be unique and match the number of vectors.")
 
         # If any of the IDs already exist, remove their old embeddings first.
@@ -101,8 +106,12 @@ class VectorDatabase:
         """
         if len(self) == 0:
             raise RuntimeError("The vector database is empty.")
-
-        idx, scores = self.index.search(self.vectors, self._check(vectors), k)
+        if not isinstance(k, int) or k < 1:
+            raise ValueError("k must be a positive integer.")
+        vectors = self._check(vectors)
+        if len(vectors) == 0:
+            raise ValueError("Query vectors must not be empty.")
+        idx, scores = self.index.search(self.vectors, vectors, k)
 
         return [[self.ids[j] for j in row] for row in idx], scores
 
@@ -132,11 +141,13 @@ class VectorDatabase:
             cfg = json.load(f)
 
         db = cls(cfg["dim"], cfg.get("encoder"))
-        db.vectors = np.load(os.path.join(directory, "vectors.npy"))
+        db.vectors = db._check(np.load(os.path.join(directory, "vectors.npy"), allow_pickle=False))
 
         with open(os.path.join(directory, "ids.json"), encoding="utf-8") as f:
             db.ids = json.load(f)
-
+        if (len(db.ids) != len(db.vectors) or len(set(db.ids)) != len(db.ids)
+                or any(not isinstance(item, str) or not item.strip() for item in db.ids)):
+            raise ValueError("Stored IDs must be unique nonempty strings matching the vectors.")
         return db
 
 
@@ -152,13 +163,16 @@ def encode_token_ids(
     """
     was_training = encoder.training
     encoder.eval()
-
-    out = [
-        encoder(token_ids[i:i + batch_size])
-        for i in range(0, len(token_ids), batch_size)
-    ]
-
-    encoder.train(was_training)
+    if batch_size < 1 or len(token_ids) == 0:
+        encoder.train(was_training)
+        raise ValueError("Encoding requires nonempty input and a positive batch size.")
+    try:
+        out = [
+            encoder(token_ids[i:i + batch_size])
+            for i in range(0, len(token_ids), batch_size)
+        ]
+    finally:
+        encoder.train(was_training)
     return torch.cat(out)
 
 

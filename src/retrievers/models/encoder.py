@@ -33,7 +33,11 @@ class ScaledDotProductAttention(nn.Module):
         scaled_scores = scores/sqrt(q.shape[-1])
         if mask is not None:
             scaled_scores = scaled_scores.masked_fill(~mask,float("-inf"))
+            fully_masked = ~mask.any(dim=-1, keepdim=True)
+            scaled_scores = scaled_scores.masked_fill(fully_masked, 0.0)
         attention_weights = F.softmax(scaled_scores,dim=-1)
+        if mask is not None:
+            attention_weights = attention_weights.masked_fill(~mask, 0.0)
         output = attention_weights @ v
         return (output,attention_weights)
 
@@ -216,7 +220,7 @@ class EncoderBlock(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
 
-    def forward(self,x,mask=None):
+    def forward(self,x,mask=None,return_attention=False):
         """Gather context, then transform each token's features.
 
         Args:
@@ -229,11 +233,11 @@ class EncoderBlock(nn.Module):
         Returns:
             torch.Tensor: Contextual token vectors with shape (B, L, d_model).
         """
-        attention_output , _ = self.attention(x,mask)
+        attention_output, weights = self.attention(x,mask)
         x = self.norm1(x+self.dropout1(attention_output))
         ffn_output = self.feed_forward(x)
         x = self.norm2(x+self.dropout2(ffn_output))
-        return x
+        return (x, weights) if return_attention else x
 
 class TransformerEncoder(nn.Module):
     """Combine token embeddings, positions, and independently learned encoder blocks.
@@ -320,7 +324,7 @@ class TransformerEncoder(nn.Module):
         count = valid.sum(dim=1, keepdim=True).to(dtype=x.dtype)
         return total / count
 
-    def forward(self, token_ids, return_token_embeddings: bool = False):
+    def forward(self, token_ids, return_token_embeddings: bool = False, return_attention: bool = False):
         """Embed tokens, add positions, run the blocks, and pool the result.
 
         Args:
@@ -342,8 +346,12 @@ class TransformerEncoder(nn.Module):
 
         x = self.token_embedding(token_ids)
         x = self.position_encoding(x)
+        attention = []
         for layer in self.layers:
-            x = layer(x, mask)
-        if return_token_embeddings:
-            return x
-        return self.pool(x, mask)
+            if return_attention:
+                x, weights = layer(x, mask, return_attention=True)
+                attention.append(weights)
+            else:
+                x = layer(x, mask)
+        result = x if return_token_embeddings else self.pool(x, mask)
+        return (result, attention) if return_attention else result

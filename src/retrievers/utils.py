@@ -10,7 +10,11 @@ def retrieveQueryAndGetRelevancies(model: Retriever, queries: list[Query], k: in
     Returns a list of lists of booleans that are True when the retrieved document matches the ground truth of that query.
     """
     N = len(queries)
-    retrieved_documents = model.Lookup(queries=[query.getQuery() for query in queries], k=k)
+    retrieved_documents = []
+    for start in range(0, N, 32):
+        retrieved_documents.extend(model.Lookup(
+            queries=[query.getQuery() for query in queries[start:start + 32]], k=k
+        ))
     relevancies = []
     for i in range(N):
         query_relevancies = []
